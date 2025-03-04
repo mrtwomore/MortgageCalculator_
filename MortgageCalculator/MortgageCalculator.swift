@@ -1,19 +1,43 @@
-// This file is kept for compatibility but all functionality has been moved
-// to dedicated files with better organization.
-//
-// See:
-// - Models/Models.swift - All data models
-// - Models/MortgageCalculatorService.swift - Calculation services
-// - Models/ScenarioStore.swift - Scenario storage
-// - Views/* - UI components
-//
-// This reorganization improves:
-// - Performance by eliminating redundant calculations
-// - Memory usage by optimizing data structures
-// - Code maintainability through better separation of concerns 
+import Foundation
 
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
+struct PaymentDetails {
+    let principal: Double
+    let interest: Double
+    let totalPayment: Double
+    let remainingBalance: Double
+}
+
+class MortgageCalculator {
+    static func calculateMonthlyPayment(loanAmount: Double, annualInterestRate: Double, loanTermYears: Double) -> Double {
+        let monthlyInterestRate = annualInterestRate / 12.0 / 100.0
+        let numberOfPayments = loanTermYears * 12
+        
+        let denominator = pow(1 + monthlyInterestRate, numberOfPayments) - 1
+        let monthlyPayment = loanAmount * (monthlyInterestRate * pow(1 + monthlyInterestRate, numberOfPayments)) / denominator
+        
+        return monthlyPayment
+    }
+    
+    static func calculateAmortizationSchedule(loanAmount: Double, annualInterestRate: Double, loanTermYears: Double) -> [PaymentDetails] {
+        var schedule: [PaymentDetails] = []
+        let monthlyPayment = calculateMonthlyPayment(loanAmount: loanAmount, annualInterestRate: annualInterestRate, loanTermYears: loanTermYears)
+        let monthlyInterestRate = annualInterestRate / 12.0 / 100.0
+        var remainingBalance = loanAmount
+        
+        for _ in 1...Int(loanTermYears * 12) {
+            let interestPayment = remainingBalance * monthlyInterestRate
+            let principalPayment = monthlyPayment - interestPayment
+            remainingBalance -= principalPayment
+            
+            let payment = PaymentDetails(
+                principal: principalPayment,
+                interest: interestPayment,
+                totalPayment: monthlyPayment,
+                remainingBalance: remainingBalance
+            )
+            schedule.append(payment)
+        }
+        
+        return schedule
     }
 } 
