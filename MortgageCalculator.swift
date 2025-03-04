@@ -538,6 +538,13 @@ struct ContentView: View {
         }
     }
     
+    /// Calculates the periodic payment for a mortgage loan
+    /// - Parameters:
+    ///   - loanAmount: The principal loan amount
+    ///   - interestRate: The annual interest rate as a percentage
+    ///   - loanTerm: The loan term in years
+    ///   - frequency: The payment frequency (Weekly, Fortnightly, Monthly)
+    /// - Returns: The periodic payment amount
     func calculatePeriodicPayment(loanAmount: Decimal, interestRate: Decimal, loanTerm: Decimal, frequency: String) -> Decimal {
         // Get number of payments per year
         let paymentsPerYear = Decimal(PAYMENT_FREQUENCIES[frequency] ?? 12)
@@ -727,35 +734,41 @@ struct ContentView: View {
         
         let baseTotalPaid = loanAmount + baseTotalInterest
         
-        for increase in increases {
-            let increasedPayment = basePayment * (1 + increase/100)
-            
-            let increasedSchedule = generateScheduleWithFixedPayment(
-                loanAmount: loanAmount,
-                interestRate: interestRate,
-                loanTerm: loanTerm,
-                frequency: frequency,
-                fixedPayment: increasedPayment
-            )
-            
-            if let lastPayment = increasedSchedule.last {
-                let increasedTotalInterest = lastPayment.totalInterestPaid
-                let increasedYears = Double(increasedSchedule.count) / Double(PAYMENT_FREQUENCIES[frequency] ?? 12)
-                let interestSavings = baseTotalInterest - increasedTotalInterest
-                let timeSaved = loanTerm - increasedYears
-                let increasedTotalPaid = loanAmount + increasedTotalInterest
+        DispatchQueue.global().async {
+            for increase in increases {
+                let increasedPayment = basePayment * (1 + increase/100)
                 
-                let scenario = ComparisonScenario(
-                    increasePercentage: increase,
-                    newPayment: increasedPayment,
-                    yearsToPay: increasedYears,
-                    interestSavings: interestSavings,
-                    timeSaved: timeSaved,
-                    totalPaid: increasedTotalPaid,
-                    totalSaved: baseTotalPaid - increasedTotalPaid
+                let increasedSchedule = generateScheduleWithFixedPayment(
+                    loanAmount: loanAmount,
+                    interestRate: interestRate,
+                    loanTerm: loanTerm,
+                    frequency: frequency,
+                    fixedPayment: increasedPayment
                 )
                 
-                scenarios.append(scenario)
+                if let lastPayment = increasedSchedule.last {
+                    let increasedTotalInterest = lastPayment.totalInterestPaid
+                    let increasedYears = Double(increasedSchedule.count) / Double(PAYMENT_FREQUENCIES[frequency] ?? 12)
+                    let interestSavings = baseTotalInterest - increasedTotalInterest
+                    let timeSaved = loanTerm - increasedYears
+                    let increasedTotalPaid = loanAmount + increasedTotalInterest
+                    
+                    let scenario = ComparisonScenario(
+                        increasePercentage: increase,
+                        newPayment: increasedPayment,
+                        yearsToPay: increasedYears,
+                        interestSavings: interestSavings,
+                        timeSaved: timeSaved,
+                        totalPaid: increasedTotalPaid,
+                        totalSaved: baseTotalPaid - increasedTotalPaid
+                    )
+                    
+                    scenarios.append(scenario)
+                }
+            }
+            
+            DispatchQueue.main.async {
+                // Update UI with results
             }
         }
         
@@ -1074,6 +1087,10 @@ struct PaymentPeriod: Identifiable {
     let annualInterest: Decimal
     let percentagePaid: Decimal
     let year: Int
+    
+    var totalPrincipalPaid: Decimal {
+        return payment * Decimal(periodNumber) - totalInterestPaid
+    }
 }
 
 struct YearlySummary: Identifiable {
@@ -1140,14 +1157,14 @@ struct SavedScenariosView: View {
                             .font(.headline)
                         
                         HStack {
-                            Text("Loan: $\(String(describing: scenario.loanAmount))")
+                            Text("Loan: $\(String(format: "%.0f", NSDecimalNumber(decimal: scenario.loanAmount).doubleValue))")
                             Spacer()
-                            Text("Rate: \(String(describing: scenario.interestRate))%")
+                            Text("Rate: \(String(format: "%.2f", NSDecimalNumber(decimal: scenario.interestRate).doubleValue))%")
                         }
                         .font(.subheadline)
                         
                         HStack {
-                            Text("Term: \(String(describing: scenario.loanTerm)) years")
+                            Text("Term: \(String(format: "%.1f", NSDecimalNumber(decimal: scenario.loanTerm).doubleValue)) years")
                             Spacer()
                             Text("Frequency: \(scenario.paymentFrequency)")
                         }
