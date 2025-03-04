@@ -490,8 +490,12 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Mortgage Calculator")
-            .alert(inputErrorMessage, isPresented: $showInputError) {
-                Button("OK", role: .cancel) {}
+            .alert(isPresented: $showInputError) {
+                Alert(
+                    title: Text("Error"),
+                    message: Text(inputErrorMessage),
+                    dismissButton: .default(Text("OK"))
+                )
             }
             .sheet(isPresented: $showAmortizationSchedule) {
                 if let result = calculationResult {
@@ -521,47 +525,33 @@ struct ContentView: View {
                     }
                 )
             }
-            .alert("Save Scenario", isPresented: $showingScenarioSaveSheet) {
-                TextField("Scenario Name", text: $newScenarioName)
-                
-                Button("Cancel", role: .cancel) {
-                    newScenarioName = ""
-                }
-                
-                Button("Save") {
-                    saveCurrentScenario()
-                    newScenarioName = ""
-                }
-            } message: {
-                Text("Enter a name to identify this mortgage scenario")
+            .sheet(isPresented: $showingScenarioSaveSheet) {
+                SaveScenarioView(
+                    newScenarioName: $newScenarioName,
+                    onSave: {
+                        saveCurrentScenario()
+                        newScenarioName = ""
+                    },
+                    onCancel: {
+                        newScenarioName = ""
+                    }
+                )
             }
         }
     }
     
-    /// Calculates the periodic payment for a mortgage loan
-    /// - Parameters:
-    ///   - loanAmount: The principal loan amount
-    ///   - interestRate: The annual interest rate as a percentage
-    ///   - loanTerm: The loan term in years
-    ///   - frequency: The payment frequency (Weekly, Fortnightly, Monthly)
-    /// - Returns: The periodic payment amount
-    func calculatePeriodicPayment(loanAmount: Decimal, interestRate: Decimal, loanTerm: Decimal, frequency: String) -> Decimal {
-        // Get number of payments per year
+    // Fix type conversion in calculations
+    private func calculatePeriodicPayment(loanAmount: Decimal, interestRate: Decimal, loanTerm: Decimal, frequency: String) -> Decimal {
         let paymentsPerYear = Decimal(PAYMENT_FREQUENCIES[frequency] ?? 12)
-        
-        // Convert annual rate to periodic rate
         let periodicRate = (interestRate / 100) / paymentsPerYear
-        
-        // Calculate number of payments
         let numberOfPayments = loanTerm * paymentsPerYear
         
-        // Calculate periodic payment using the loan payment formula
-        // For Decimal, we need to use NSDecimalNumber for power operations
+        // Convert to Double for power operation
         let periodicRateDouble = NSDecimalNumber(decimal: periodicRate).doubleValue
         let numberOfPaymentsDouble = NSDecimalNumber(decimal: numberOfPayments).doubleValue
         
         let powerFactor = pow(1 + periodicRateDouble, numberOfPaymentsDouble)
-        let powerFactorDecimal = Decimal(powerFactor)
+        let powerFactorDecimal = Decimal(string: String(powerFactor)) ?? 0
         
         let numerator = loanAmount * periodicRate * powerFactorDecimal
         let denominator = powerFactorDecimal - 1
@@ -806,6 +796,16 @@ struct ContentView: View {
         paymentFrequency = scenario.paymentFrequency
         additionalPayment = NSDecimalNumber(decimal: scenario.additionalPayment).stringValue
     }
+
+    // Update chart view with iOS version check
+    @ViewBuilder
+    func getChartView() -> some View {
+        if #available(iOS 17.0, *) {
+            PaymentBreakdownChartNew(yearlySummary: yearlySummary)
+        } else {
+            PaymentBreakdownChartLegacy(yearlySummary: yearlySummary)
+        }
+    }
 }
 
 struct AmortizationScheduleView: View {
@@ -870,7 +870,7 @@ struct AmortizationScheduleView: View {
                 } else if selectedChartDataType == "Principal vs Interest" {
                     PrincipalVsInterestChart(yearlySummary: yearlySummary)
                 } else {
-                    PaymentBreakdownChart(yearlySummary: yearlySummary)
+                    getChartView()
                 }
             } else {
                 // Fallback for iOS 15 and earlier
@@ -987,8 +987,8 @@ struct PrincipalVsInterestChart: View {
     }
 }
 
-@available(iOS 16.0, *)
-struct PaymentBreakdownChart: View {
+@available(iOS 17.0, *)
+struct PaymentBreakdownChartNew: View {
     var yearlySummary: [YearlySummary]
     
     var body: some View {
@@ -1016,6 +1016,38 @@ struct PaymentBreakdownChart: View {
                     Text("Interest")
                         .font(.caption)
                         .foregroundColor(.white)
+                }
+            }
+        }
+    }
+}
+
+// Add legacy chart view for older iOS versions
+struct PaymentBreakdownChartLegacy: View {
+    var yearlySummary: [YearlySummary]
+    
+    var body: some View {
+        VStack {
+            Text("Payment Breakdown")
+                .font(.headline)
+            
+            if let firstYear = yearlySummary.first {
+                HStack(spacing: 20) {
+                    VStack {
+                        Text("Principal")
+                            .font(.caption)
+                        Text("$\(String(format: "%.2f", NSDecimalNumber(decimal: firstYear.principalPaid).doubleValue))")
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                    }
+                    
+                    VStack {
+                        Text("Interest")
+                            .font(.caption)
+                        Text("$\(String(format: "%.2f", NSDecimalNumber(decimal: firstYear.interestPaid).doubleValue))")
+                            .font(.subheadline)
+                            .foregroundColor(.red)
+                    }
                 }
             }
         }
@@ -1253,6 +1285,26 @@ struct ScenarioShareSheet: UIViewControllerRepresentable {
     }
     
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// Add a proper save scenario view
+struct SaveScenarioView: View {
+    @Binding var newScenarioName: String
+    let onSave: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField("Scenario Name", text: $newScenarioName)
+            }
+            .navigationTitle("Save Scenario")
+            .navigationBarItems(
+                leading: Button("Cancel") { onCancel() },
+                trailing: Button("Save") { onSave() }
+            )
+        }
+    }
 }
 
 struct ContentView_Previews: PreviewProvider {
