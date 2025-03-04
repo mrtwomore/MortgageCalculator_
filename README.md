@@ -1,23 +1,60 @@
-# Mortgage Calculator
+# Mortgage Calculator iOS App
 
-A comprehensive iOS mortgage calculator app built with SwiftUI that helps users calculate mortgage payments, view amortization schedules, and compare different payment scenarios.
+A highly optimized mortgage calculator app for iOS that helps users calculate mortgage payments, amortization schedules, and compare payment scenarios.
 
 ## Features
 
-- Calculate mortgage payments based on loan amount, interest rate, term, and payment frequency
-- View detailed amortization schedules with principal and interest breakdowns
-- Compare different payment scenarios to see potential savings
-- Add extra payments to see how they affect the loan term and interest paid
-- Save and manage multiple mortgage scenarios
-- Share mortgage scenarios with others
-- Interactive charts showing balance over time and payment breakdowns
-- iOS 15 compatibility with fallback chart views
+- Fast and accurate mortgage payment calculations
+- Interactive amortization schedule with beautiful charts
+- Payment comparison scenarios to see the impact of making additional payments
+- Save and share mortgage scenarios
+- Optimized for performance and low resource usage
+
+## Technical Optimizations
+
+This app has been extensively optimized for performance:
+
+1. **Code Structure Improvements**
+   - Separated models, views, and calculation logic into dedicated files
+   - Implemented proper MVVM architecture
+   - Improved code reusability and maintainability
+
+2. **Performance Optimizations**
+   - Eliminated redundant calculations
+   - Optimized algorithm implementation
+   - Reduced memory allocations using capacity reservation
+   - Cached calculation results where appropriate
+   - Used a singleton calculator service to reduce instantiation overhead
+
+3. **Memory Usage Improvements**
+   - Switched from Decimal to Double for calculations to reduce conversion overhead
+   - Only display subset of amortization schedule data instead of the full dataset
+   - Optimized data structures with appropriate types
+
+4. **UI Responsiveness**
+   - Real-time calculation updates on input change
+   - Streamlined UI with performance in mind
+   - Optimized chart rendering
+
+## How to Use
+
+1. **Input your mortgage details:**
+   - Loan amount
+   - Interest rate
+   - Loan term
+   - Payment frequency
+
+2. **Optional: Add additional payment amount**
+
+3. **View results and explore options:**
+   - View detailed amortization schedule
+   - See payment comparison scenarios
+   - Save and manage multiple scenarios
 
 ## Requirements
 
 - iOS 15.0+
-- Xcode 14.0+
-- Swift 5.7+
+- Charts features require iOS 16.0+
 
 ## Installation
 
