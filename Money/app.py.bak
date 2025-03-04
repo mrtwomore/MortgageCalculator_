@@ -1,0 +1,300 @@
+import matplotlib
+matplotlib.use('Agg')
+from flask import Flask, render_template, request, send_file, make_response, jsonify
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import io
+import base64
+from datetime import datetime
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+import os
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-here')
+
+PAYMENT_FREQUENCIES = {
+    'weekly': 52,
+    'fortnightly': 26,
+    'monthly': 12
+}
+
+def calculate_payment(principal, annual_rate, years, frequency='monthly'):
+    """Calculate the periodic payment amount."""
+    # Convert annual rate to periodic rate
+    # Using simple division for weekly/fortnightly payments like banks do
+    periodic_rate = (annual_rate / 100) / PAYMENT_FREQUENCIES[frequency]
+    
+    # Calculate number of payments
+    n_payments = years * PAYMENT_FREQUENCIES[frequency]
+    
+    # Calculate periodic payment using the loan payment formula
+    # P = L[c(1 + c)^n]/[(1 + c)^n - 1]
+    # where P = payment, L = principal, c = periodic rate, n = number of payments
+    numerator = periodic_rate * (1 + periodic_rate)**n_payments
+    denominator = (1 + periodic_rate)**n_payments - 1
+    payment = principal * (numerator / denominator)
+    
+    # Round to 2 decimal places to match bank calculations
+    return round(payment, 2)
+
+def generate_schedule(principal, annual_rate, years, frequency='monthly'):
+    """Generate amortization schedule."""
+    # Convert annual rate to periodic rate using simple division
+    periodic_rate = (annual_rate / 100) / PAYMENT_FREQUENCIES[frequency]
+    
+    # Calculate payment with rounding
+    payment = calculate_payment(principal, annual_rate, years, frequency)
+    
+    # Initialize lists to store values
+    payments = []
+    remaining_balance = principal
+    total_interest = 0
+    annual_interest = 0
+    year_number = 1
+    
+    for payment_num in range(1, years * PAYMENT_FREQUENCIES[frequency] + 1):
+        # Calculate interest with rounding
+        interest_payment = round(remaining_balance * periodic_rate, 2)
+        principal_payment = round(payment - interest_payment, 2)
+        
+        # Handle final payment rounding
+        if remaining_balance < principal_payment:
+            principal_payment = remaining_balance
+            payment = principal_payment + interest_payment
+        
+        remaining_balance = round(remaining_balance - principal_payment, 2)
+        total_interest = round(total_interest + interest_payment, 2)
+        annual_interest = round(annual_interest + interest_payment, 2)
+        
+        # Calculate the current year
+        current_year = (payment_num - 1) // PAYMENT_FREQUENCIES[frequency] + 1
+        
+        # If we've moved to a new year, reset the annual interest
+        if current_year != year_number:
+            annual_interest = interest_payment
+            year_number = current_year
+        
+        if remaining_balance < 0:
+            remaining_balance = 0
+        
+        payments.append({
+            'Payment #': payment_num,
+            'Payment': payment,
+            'Principal': principal_payment,
+            'Interest': interest_payment,
+            'Remaining Balance': remaining_balance,
+            'Total Interest Paid': total_interest,
+            'Annual Interest': annual_interest,
+            'Loan Paid (%)': round(((principal - remaining_balance) / principal) * 100, 1),
+            'Year': current_year
+        })
+        
+        if remaining_balance == 0:
+            break
+    
+    return pd.DataFrame(payments)
+
+def calculate_comparison_scenarios(principal, annual_rate, years, frequency='monthly'):
+    """Calculate different payment scenarios with increased payments."""
+    base_payment = calculate_payment(principal, annual_rate, years, frequency)
+    base_schedule = generate_schedule(principal, annual_rate, years, frequency)
+    
+    if base_schedule.empty:
+        return []
+    
+    base_total_interest = base_schedule['Total Interest Paid'].iloc[-1]
+    base_years = len(base_schedule) / PAYMENT_FREQUENCIES[frequency]
+    base_total_paid = principal + base_total_interest
+    
+    scenarios = []
+    increases = [10, 25, 50]  # Percentage increases
+    
+    for increase in increases:
+        increased_payment = base_payment * (1 + increase/100)
+        
+        # Generate schedule with increased payment
+        increased_schedule = generate_schedule_with_payment(
+            principal, annual_rate, years, frequency,
+            fixed_payment=increased_payment
+        )
+        
+        if increased_schedule.empty:
+            continue
+            
+        increased_total_interest = increased_schedule['Total Interest Paid'].iloc[-1]
+        increased_years = len(increased_schedule) / PAYMENT_FREQUENCIES[frequency]
+        increased_total_paid = principal + increased_total_interest
+        
+        interest_savings = base_total_interest - increased_total_interest
+        time_saved = base_years - increased_years
+        
+        scenarios.append({
+            'increase_percentage': increase,
+            'new_payment': increased_payment,
+            'years_to_pay': increased_years,
+            'interest_savings': interest_savings,
+            'time_saved': time_saved,
+            'total_paid': increased_total_paid,
+            'total_saved': base_total_paid - increased_total_paid
+        })
+    
+    return scenarios
+
+def generate_schedule_with_payment(principal, annual_rate, years, frequency='monthly', fixed_payment=None):
+    """Generate amortization schedule with a fixed payment amount."""
+    # Convert annual rate to periodic rate using simple division
+    periodic_rate = (annual_rate / 100) / PAYMENT_FREQUENCIES[frequency]
+    
+    # Use provided payment or calculate if not provided
+    min_payment = calculate_payment(principal, annual_rate, years, frequency)
+    payment = round(fixed_payment, 2) if fixed_payment is not None else min_payment
+    
+    if payment < min_payment:
+        payment = min_payment  # Ensure payment is at least the minimum required
+    
+    # Initialize lists to store values
+    payments = []
+    remaining_balance = round(principal, 2)  # Start with rounded balance
+    total_interest = 0
+    annual_interest = 0
+    year_number = 1
+    
+    while remaining_balance > 0:
+        # Calculate interest with rounding
+        interest_payment = round(remaining_balance * periodic_rate, 2)
+        principal_payment = round(min(payment - interest_payment, remaining_balance), 2)
+        
+        # Adjust final payment if needed
+        if principal_payment > remaining_balance:
+            principal_payment = remaining_balance
+            payment = round(interest_payment + principal_payment, 2)
+        
+        # Update balances with rounding
+        remaining_balance = round(remaining_balance - principal_payment, 2)
+        total_interest = round(total_interest + interest_payment, 2)
+        annual_interest = round(annual_interest + interest_payment, 2)
+        
+        payment_num = len(payments) + 1
+        current_year = (payment_num - 1) // PAYMENT_FREQUENCIES[frequency] + 1
+        
+        # Reset annual interest for new year
+        if current_year != year_number:
+            annual_interest = interest_payment
+            year_number = current_year
+        
+        # Record payment details
+        payments.append({
+            'Payment #': payment_num,
+            'Payment': payment,
+            'Principal': principal_payment,
+            'Interest': interest_payment,
+            'Remaining Balance': remaining_balance,
+            'Total Interest Paid': total_interest,
+            'Annual Interest': annual_interest,
+            'Loan Paid (%)': round(((principal - remaining_balance) / principal) * 100, 1),
+            'Year': current_year
+        })
+        
+        # Safety check to prevent infinite loops
+        if payment_num > years * PAYMENT_FREQUENCIES[frequency] * 2:
+            break
+    
+    return pd.DataFrame(payments)
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        try:
+            principal = float(request.form['principal'])
+            annual_rate = float(request.form['annual_rate'])
+            years = int(request.form['years'])
+            frequency = request.form.get('frequency', 'monthly')
+            
+            payment = calculate_payment(principal, annual_rate, years, frequency)
+            schedule = generate_schedule(principal, annual_rate, years, frequency)
+            
+            if not schedule.empty:
+                # Calculate total interest and other summary stats
+                total_interest = schedule['Total Interest Paid'].iloc[-1]
+                total_payments = len(schedule)
+                
+                # Calculate comparison scenarios
+                scenarios = calculate_comparison_scenarios(
+                    principal, annual_rate, years, frequency
+                )
+                
+                return render_template('index.html',
+                                    principal=principal,
+                                    annual_rate=annual_rate,
+                                    years=years,
+                                    frequency=frequency,
+                                    payment=payment,
+                                    schedule=schedule.to_dict('records'),
+                                    total_interest=total_interest,
+                                    original_term=years,
+                                    actual_years_to_pay=total_payments / PAYMENT_FREQUENCIES[frequency],
+                                    scenarios=scenarios)
+            else:
+                return render_template('index.html',
+                                    principal=principal,
+                                    payment=0,
+                                    schedule=[])
+                                    
+        except ValueError:
+            return render_template('index.html', error="Invalid input. Please enter valid numbers.")
+    
+    return render_template('index.html')
+
+@app.route('/calculate-scenario', methods=['POST'])
+def calculate_scenario():
+    """Calculate mortgage scenario with adjusted payment."""
+    data = request.get_json()
+    
+    # Get parameters from request
+    principal = float(data['principal'])
+    annual_rate = float(data['annual_rate'])
+    years = int(data['years'])
+    frequency = data['frequency']
+    new_payment = float(data['payment'])
+    
+    # Generate schedule with new payment
+    schedule = generate_schedule_with_payment(
+        principal, annual_rate, years, frequency,
+        fixed_payment=new_payment
+    )
+    
+    if schedule.empty:
+        return jsonify({
+            'years_to_pay': years,
+            'total_interest': 0,
+            'interest_savings': 0,
+            'time_saved': 0
+        })
+    
+    # Calculate base scenario for comparison
+    base_schedule = generate_schedule(
+        principal, annual_rate, years, frequency
+    )
+    
+    base_total_interest = base_schedule['Total Interest Paid'].iloc[-1]
+    base_years = len(base_schedule) / PAYMENT_FREQUENCIES[frequency]
+    
+    # Calculate results
+    total_interest = schedule['Total Interest Paid'].iloc[-1]
+    years_to_pay = len(schedule) / PAYMENT_FREQUENCIES[frequency]
+    interest_savings = base_total_interest - total_interest
+    time_saved = base_years - years_to_pay
+    
+    return jsonify({
+        'years_to_pay': years_to_pay,
+        'total_interest': total_interest,
+        'interest_savings': interest_savings,
+        'time_saved': time_saved
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True)
