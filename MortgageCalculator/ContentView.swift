@@ -1,78 +1,728 @@
 import SwiftUI
+import Charts
 
 struct ContentView: View {
-    @State private var loanAmount: String = "300000"
-    @State private var interestRate: String = "5.0"
-    @State private var loanTerm: String = "30"
+    @StateObject private var scenarioStore = ScenarioStore()
     @State private var amortizationSchedule: [PaymentDetails] = []
+    @State private var showingScenarioSelector = false
+    @State private var showingSaveOptions = false
+    @State private var showingExportOptions = false
+    @State private var newScenarioName = ""
+    @State private var selectedTab = 0
+    @State private var showingPDFPreview = false
+    @State private var pdfData: Data?
+    @State private var comparisonSchedule: [PaymentDetails] = []
+    @State private var comparisonScenario: MortgageScenario?
+    @AppStorage("colorScheme") private var colorScheme: String = "system"
     
-    private var monthlyPayment: Double {
-        guard let amount = Double(loanAmount),
-              let rate = Double(interestRate),
-              let term = Double(loanTerm) else { return 0 }
-        
-        return MortgageCalculator.calculateMonthlyPayment(
-            loanAmount: amount,
-            annualInterestRate: rate,
-            loanTermYears: term
+    private var currentScenario: Binding<MortgageScenario> {
+        Binding(
+            get: { scenarioStore.currentScenario },
+            set: { 
+                scenarioStore.currentScenario = $0
+                scenarioStore.updateScenario($0)
+            }
         )
     }
     
     var body: some View {
+        TabView(selection: $selectedTab) {
+            inputView
+                .tabItem {
+                    Label("Calculator", systemImage: "calculator")
+                }
+                .tag(0)
+            
+            resultsView
+                .tabItem {
+                    Label("Results", systemImage: "chart.pie")
+                }
+                .tag(1)
+            
+            amortizationScheduleView
+                .tabItem {
+                    Label("Schedule", systemImage: "calendar")
+                }
+                .tag(2)
+            
+            comparisonView
+                .tabItem {
+                    Label("Compare", systemImage: "arrow.left.arrow.right")
+                }
+                .tag(3)
+            
+            settingsView
+                .tabItem {
+                    Label("Settings", systemImage: "gear")
+                }
+                .tag(4)
+        }
+        .onAppear {
+            calculateSchedule()
+        }
+        .onChange(of: scenarioStore.currentScenario) { _ in
+            calculateSchedule()
+        }
+        .sheet(isPresented: $showingPDFPreview) {
+            if let data = pdfData {
+                PDFPreview(data: data)
+            }
+        }
+        .preferredColorScheme(getColorScheme())
+    }
+    
+    private var inputView: some View {
         NavigationView {
-            List {
+            Form {
                 Section(header: Text("Loan Details")) {
-                    TextField("Loan Amount", text: $loanAmount)
-                        .keyboardType(.decimalPad)
-                    
-                    TextField("Interest Rate (%)", text: $interestRate)
-                        .keyboardType(.decimalPad)
-                    
-                    TextField("Loan Term (Years)", text: $loanTerm)
-                        .keyboardType(.decimalPad)
-                }
-                
-                Section(header: Text("Monthly Payment")) {
-                    Text("$\(monthlyPayment, specifier: "%.2f")")
-                        .font(.headline)
-                }
-                
-                Section(header: Text("Amortization Schedule")) {
-                    Button("Calculate Schedule") {
-                        calculateSchedule()
+                    HStack {
+                        Text("Loan Amount")
+                        Spacer()
+                        TextField("Loan Amount", value: currentScenario.loanAmount, format: .currency(code: "USD"))
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
                     }
                     
-                    ForEach(Array(amortizationSchedule.enumerated()), id: \.offset) { index, payment in
-                        VStack(alignment: .leading) {
-                            Text("Month \(index + 1)")
-                                .font(.headline)
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text("Principal: $\(payment.principal, specifier: "%.2f")")
-                                    Text("Interest: $\(payment.interest, specifier: "%.2f")")
+                    HStack {
+                        Text("Interest Rate (%)")
+                        Spacer()
+                        TextField("Interest Rate", value: currentScenario.interestRate, format: .number)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    
+                    HStack {
+                        Text("Loan Term (Years)")
+                        Spacer()
+                        TextField("Loan Term", value: currentScenario.loanTermYears, format: .number)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    
+                    Picker("Loan Type", selection: currentScenario.loanType) {
+                        ForEach(LoanType.allCases) { loanType in
+                            Text(loanType.rawValue).tag(loanType.rawValue)
+                        }
+                    }
+                    
+                    Picker("Payment Frequency", selection: currentScenario.paymentFrequency) {
+                        ForEach(PaymentFrequency.allCases) { frequency in
+                            Text(frequency.rawValue).tag(frequency.rawValue)
+                        }
+                    }
+                }
+                
+                Section(header: Text("Additional Payments")) {
+                    HStack {
+                        Text("Extra Payment")
+                        Spacer()
+                        TextField("Extra", value: currentScenario.additionalPayment, format: .currency(code: "USD"))
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    
+                    NavigationLink(destination: LumpSumPaymentsView(scenario: currentScenario)) {
+                        HStack {
+                            Text("Lump Sum Payments")
+                            Spacer()
+                            Text("\(currentScenario.wrappedValue.lumpSumPayments.count)")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                Section(header: Text("Payment Summary")) {
+                    HStack {
+                        Text("Regular Payment")
+                        Spacer()
+                        Text(Formatters.formatCurrency(currentScenario.wrappedValue.regularPayment))
+                            .bold()
+                    }
+                    
+                    if currentScenario.wrappedValue.additionalPayment > 0 {
+                        HStack {
+                            Text("Additional Payment")
+                            Spacer()
+                            Text(Formatters.formatCurrency(currentScenario.wrappedValue.additionalPayment))
+                                .foregroundColor(.green)
+                        }
+                        
+                        HStack {
+                            Text("Total Payment")
+                            Spacer()
+                            Text(Formatters.formatCurrency(currentScenario.wrappedValue.effectivePayment))
+                                .bold()
+                        }
+                    }
+                    
+                    if !amortizationSchedule.isEmpty {
+                        HStack {
+                            Text("Total Interest")
+                            Spacer()
+                            Text(Formatters.formatCurrency(amortizationSchedule.last?.interestToDate ?? 0))
+                                .foregroundColor(.red)
+                        }
+                        
+                        HStack {
+                            Text("Number of Payments")
+                            Spacer()
+                            Text("\(amortizationSchedule.count)")
+                        }
+                        
+                        if currentScenario.wrappedValue.additionalPayment > 0 || !currentScenario.wrappedValue.lumpSumPayments.isEmpty {
+                            let savedYears = (currentScenario.wrappedValue.loanTermYears * Double(PaymentFrequency(rawValue: currentScenario.wrappedValue.paymentFrequency)?.paymentsPerYear ?? 12) - Double(amortizationSchedule.count)) / Double(PaymentFrequency(rawValue: currentScenario.wrappedValue.paymentFrequency)?.paymentsPerYear ?? 12)
+                            
+                            if savedYears > 0 {
+                                HStack {
+                                    Text("Time Saved")
+                                    Spacer()
+                                    Text(String(format: "%.1f years", savedYears))
+                                        .foregroundColor(.green)
+                                        .bold()
                                 }
-                                Spacer()
-                                Text("Balance: $\(payment.remainingBalance, specifier: "%.2f")")
-                                    .font(.caption)
                             }
                         }
-                        .padding(.vertical, 4)
                     }
                 }
             }
             .navigationTitle("Mortgage Calculator")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: {
+                        showingScenarioSelector = true
+                    }) {
+                        Label("Scenarios", systemImage: "list.bullet")
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        showingSaveOptions = true
+                    }) {
+                        Label("Save", systemImage: "square.and.arrow.down")
+                    }
+                }
+            }
+            .actionSheet(isPresented: $showingScenarioSelector) {
+                ActionSheet(
+                    title: Text("Select Scenario"),
+                    message: Text("Choose a saved scenario or create a new one"),
+                    buttons: scenarioSelectButtons
+                )
+            }
+            .actionSheet(isPresented: $showingSaveOptions) {
+                ActionSheet(
+                    title: Text("Save Options"),
+                    message: Text("Save or update the current scenario"),
+                    buttons: [
+                        .default(Text("Save as New")) {
+                            newScenarioName = currentScenario.wrappedValue.name + " (Copy)"
+                            let newScenario = scenarioStore.duplicateScenario(currentScenario.wrappedValue)
+                            scenarioStore.currentScenario = newScenario
+                        },
+                        .default(Text("Update Current")) {
+                            scenarioStore.updateScenario(currentScenario.wrappedValue)
+                        },
+                        .cancel()
+                    ]
+                )
+            }
+        }
+    }
+    
+    private var scenarioSelectButtons: [ActionSheet.Button] {
+        var buttons: [ActionSheet.Button] = scenarioStore.scenarios.map { scenario in
+            .default(Text(scenario.name)) {
+                scenarioStore.currentScenario = scenario
+            }
+        }
+        
+        buttons.append(.default(Text("Create New Scenario")) {
+            let newScenario = ScenarioStore.createDefaultScenario()
+            scenarioStore.addScenario(newScenario)
+            scenarioStore.currentScenario = newScenario
+        })
+        
+        buttons.append(.cancel())
+        
+        return buttons
+    }
+    
+    private var resultsView: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                if !amortizationSchedule.isEmpty {
+                    MortgageChartView(payments: amortizationSchedule)
+                        .padding()
+                }
+                
+                List {
+                    Section(header: Text("Payment Breakdown")) {
+                        HStack {
+                            Text("Principal & Interest")
+                            Spacer()
+                            Text(Formatters.formatCurrency(currentScenario.wrappedValue.regularPayment))
+                        }
+                        
+                        if currentScenario.wrappedValue.additionalPayment > 0 {
+                            HStack {
+                                Text("Additional Payment")
+                                Spacer()
+                                Text(Formatters.formatCurrency(currentScenario.wrappedValue.additionalPayment))
+                                    .foregroundColor(.green)
+                            }
+                        }
+                        
+                        HStack {
+                            Text("Total Monthly Payment")
+                            Spacer()
+                            Text(Formatters.formatCurrency(currentScenario.wrappedValue.effectivePayment))
+                                .bold()
+                        }
+                    }
+                    
+                    Section(header: Text("Loan Progress")) {
+                        if !amortizationSchedule.isEmpty {
+                            HStack {
+                                Text("Time to Payoff")
+                                Spacer()
+                                Text(String(format: "%.1f years", Double(amortizationSchedule.count) / Double(PaymentFrequency(rawValue: currentScenario.wrappedValue.paymentFrequency)?.paymentsPerYear ?? 12)))
+                            }
+                            
+                            HStack {
+                                Text("Total Payments")
+                                Spacer()
+                                Text(Formatters.formatCurrency(amortizationSchedule.reduce(0) { $0 + $1.totalPayment }))
+                            }
+                            
+                            HStack {
+                                Text("Total Interest")
+                                Spacer()
+                                Text(Formatters.formatCurrency(amortizationSchedule.last?.interestToDate ?? 0))
+                                    .foregroundColor(.red)
+                            }
+                            
+                            HStack {
+                                Text("Interest to Principal Ratio")
+                                Spacer()
+                                Text(String(format: "%.1f%%", (amortizationSchedule.last?.interestToDate ?? 0) / currentScenario.wrappedValue.loanAmount * 100))
+                            }
+                        }
+                    }
+                    
+                    Section {
+                        Button(action: {
+                            showingExportOptions = true
+                        }) {
+                            Label("Export Results", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Payment Results")
+            .actionSheet(isPresented: $showingExportOptions) {
+                ActionSheet(
+                    title: Text("Export Options"),
+                    message: Text("Choose an export format"),
+                    buttons: [
+                        .default(Text("Generate PDF Report")) {
+                            exportPDF()
+                        },
+                        .default(Text("Export to CSV")) {
+                            exportCSV()
+                        },
+                        .cancel()
+                    ]
+                )
+            }
+        }
+    }
+    
+    private var amortizationScheduleView: some View {
+        NavigationView {
+            List {
+                ForEach(amortizationSchedule) { payment in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Payment \(payment.paymentNumber)")
+                                .font(.headline)
+                            Spacer()
+                            Text(Formatters.formatDate(payment.date))
+                                .font(.caption)
+                        }
+                        
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text("Principal: \(Formatters.formatCurrency(payment.principal))")
+                                    .foregroundColor(.primary)
+                                Text("Interest: \(Formatters.formatCurrency(payment.interest))")
+                                    .foregroundColor(.red)
+                            }
+                            
+                            Spacer()
+                            
+                            VStack(alignment: .trailing) {
+                                Text("Paid: \(Formatters.formatPercent(payment.principalToDatePercentage))")
+                                    .foregroundColor(.green)
+                                Text("Balance: \(Formatters.formatCurrency(payment.remainingBalance))")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .navigationTitle("Amortization Schedule")
+        }
+    }
+    
+    private var comparisonView: some View {
+        NavigationView {
+            VStack {
+                if comparisonScenario == nil {
+                    VStack(spacing: 20) {
+                        Text("No Comparison Scenario Selected")
+                            .font(.headline)
+                        
+                        Button("Select Scenario to Compare") {
+                            showingScenarioSelector = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemGroupedBackground))
+                } else if let comparison = comparisonScenario, !comparisonSchedule.isEmpty {
+                    Form {
+                        Section(header: Text("Current vs Comparison")) {
+                            HStack {
+                                Text("Current")
+                                Spacer()
+                                Text(currentScenario.wrappedValue.name)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            HStack {
+                                Text("Comparison")
+                                Spacer()
+                                Text(comparison.name)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        Section(header: Text("Payment Comparison")) {
+                            ComparisonRow(
+                                label: "Payment",
+                                value1: currentScenario.wrappedValue.effectivePayment,
+                                value2: comparison.effectivePayment
+                            )
+                            
+                            ComparisonRow(
+                                label: "Loan Term",
+                                value1: Double(amortizationSchedule.count) / Double(PaymentFrequency(rawValue: currentScenario.wrappedValue.paymentFrequency)?.paymentsPerYear ?? 12),
+                                value2: Double(comparisonSchedule.count) / Double(PaymentFrequency(rawValue: comparison.paymentFrequency)?.paymentsPerYear ?? 12),
+                                format: .years
+                            )
+                            
+                            ComparisonRow(
+                                label: "Total Interest",
+                                value1: amortizationSchedule.last?.interestToDate ?? 0,
+                                value2: comparisonSchedule.last?.interestToDate ?? 0
+                            )
+                            
+                            ComparisonRow(
+                                label: "Total Cost",
+                                value1: currentScenario.wrappedValue.loanAmount + (amortizationSchedule.last?.interestToDate ?? 0),
+                                value2: comparison.loanAmount + (comparisonSchedule.last?.interestToDate ?? 0)
+                            )
+                        }
+                        
+                        Section(header: Text("Savings with Better Scenario")) {
+                            let (timeSaved, interestSaved) = MortgageCalculator.calculateSavings(
+                                baseScenario: (amortizationSchedule.last?.interestToDate ?? 0) > (comparisonSchedule.last?.interestToDate ?? 0) ? currentScenario.wrappedValue : comparison,
+                                comparisonScenario: (amortizationSchedule.last?.interestToDate ?? 0) > (comparisonSchedule.last?.interestToDate ?? 0) ? comparison : currentScenario.wrappedValue
+                            )
+                            
+                            SavingsRow(label: "Time Saved", value: timeSaved, format: .years)
+                            SavingsRow(label: "Interest Saved", value: interestSaved, format: .currency)
+                        }
+                        
+                        Section {
+                            Button("Clear Comparison") {
+                                comparisonScenario = nil
+                                comparisonSchedule = []
+                            }
+                            .foregroundColor(.red)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Scenario Comparison")
+            .actionSheet(isPresented: $showingScenarioSelector) {
+                ActionSheet(
+                    title: Text("Select Scenario to Compare"),
+                    message: Text("Choose a scenario to compare with the current one"),
+                    buttons: comparisonSelectButtons
+                )
+            }
+        }
+    }
+    
+    private var comparisonSelectButtons: [ActionSheet.Button] {
+        var buttons: [ActionSheet.Button] = scenarioStore.scenarios
+            .filter { $0.id != currentScenario.wrappedValue.id }
+            .map { scenario in
+                .default(Text(scenario.name)) {
+                    comparisonScenario = scenario
+                    comparisonSchedule = MortgageCalculator.calculateAmortizationSchedule(scenario: scenario)
+                }
+            }
+        
+        buttons.append(.cancel())
+        
+        return buttons
+    }
+    
+    private var settingsView: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Appearance")) {
+                    Picker("Color Scheme", selection: $colorScheme) {
+                        Text("System").tag("system")
+                        Text("Light").tag("light")
+                        Text("Dark").tag("dark")
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                }
+                
+                Section(header: Text("Scenarios")) {
+                    ForEach(scenarioStore.scenarios) { scenario in
+                        HStack {
+                            Text(scenario.name)
+                            Spacer()
+                            if scenario.id == currentScenario.wrappedValue.id {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    .onDelete { indexSet in
+                        for index in indexSet {
+                            scenarioStore.deleteScenario(scenarioStore.scenarios[index])
+                        }
+                    }
+                }
+                
+                Section(header: Text("About")) {
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text("1.0.0")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("Settings")
         }
     }
     
     private func calculateSchedule() {
-        guard let amount = Double(loanAmount),
-              let rate = Double(interestRate),
-              let term = Double(loanTerm) else { return }
+        amortizationSchedule = MortgageCalculator.calculateAmortizationSchedule(scenario: currentScenario.wrappedValue)
+    }
+    
+    private func exportCSV() {
+        if let fileURL = ExportManager.exportToCSV(scenario: currentScenario.wrappedValue, payments: amortizationSchedule) {
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let rootViewController = windowScene.windows.first?.rootViewController else {
+                return
+            }
+            
+            ExportManager.shareFile(at: fileURL, from: rootViewController)
+        }
+    }
+    
+    private func exportPDF() {
+        pdfData = ExportManager.generatePDFReport(scenario: currentScenario.wrappedValue, payments: amortizationSchedule)
+        showingPDFPreview = true
+    }
+    
+    private func getColorScheme() -> ColorScheme? {
+        switch colorScheme {
+        case "light":
+            return .light
+        case "dark":
+            return .dark
+        default:
+            return nil
+        }
+    }
+}
+
+struct ComparisonRow: View {
+    let label: String
+    let value1: Double
+    let value2: Double
+    let format: ValueFormat
+    
+    enum ValueFormat {
+        case currency
+        case years
+        case percent
+    }
+    
+    init(label: String, value1: Double, value2: Double, format: ValueFormat = .currency) {
+        self.label = label
+        self.value1 = value1
+        self.value2 = value2
+        self.format = format
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(label)
+                .font(.headline)
+                .padding(.bottom, 2)
+            
+            HStack {
+                VStack(alignment: .leading) {
+                    Text("Current")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    formatValue(value1)
+                }
+                
+                Spacer()
+                
+                Text(difference > 0 ? "↑" : "↓")
+                    .foregroundColor(getColor())
+                    .font(.title2)
+                
+                Spacer()
+                
+                VStack(alignment: .trailing) {
+                    Text("Comparison")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    formatValue(value2)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+    
+    private var difference: Double {
+        value1 - value2
+    }
+    
+    private func getColor() -> Color {
+        switch format {
+        case .currency, .years:
+            return difference > 0 ? .red : .green
+        case .percent:
+            return difference > 0 ? .green : .red
+        }
+    }
+    
+    private func formatValue(_ value: Double) -> some View {
+        switch format {
+        case .currency:
+            return Text(Formatters.formatCurrency(value))
+        case .years:
+            return Text(String(format: "%.1f years", value))
+        case .percent:
+            return Text(Formatters.formatPercent(value))
+        }
+    }
+}
+
+struct SavingsRow: View {
+    let label: String
+    let value: Double
+    let format: ValueFormat
+    
+    enum ValueFormat {
+        case currency
+        case years
+        case percent
+    }
+    
+    var body: some View {
+        HStack {
+            Text(label)
+            Spacer()
+            switch format {
+            case .currency:
+                Text(Formatters.formatCurrency(value))
+                    .foregroundColor(.green)
+                    .bold()
+            case .years:
+                Text(String(format: "%.1f years", value))
+                    .foregroundColor(.green)
+                    .bold()
+            case .percent:
+                Text(Formatters.formatPercent(value))
+                    .foregroundColor(.green)
+                    .bold()
+            }
+        }
+    }
+}
+
+struct PDFPreview: UIViewControllerRepresentable {
+    let data: Data
+    
+    func makeUIViewController(context: Context) -> UIViewController {
+        let pdfView = PDFView()
+        pdfView.document = PDFDocument(data: data)
+        pdfView.autoScales = true
         
-        amortizationSchedule = MortgageCalculator.calculateAmortizationSchedule(
-            loanAmount: amount,
-            annualInterestRate: rate,
-            loanTermYears: term
+        let viewController = UIViewController()
+        viewController.view = pdfView
+        viewController.navigationItem.rightBarButtonItem = UIBarButtonItem(
+            barButtonSystemItem: .action,
+            target: context.coordinator,
+            action: #selector(Coordinator.share(_:))
         )
+        
+        return viewController
+    }
+    
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject {
+        let parent: PDFPreview
+        
+        init(_ parent: PDFPreview) {
+            self.parent = parent
+        }
+        
+        @objc func share(_ sender: UIBarButtonItem) {
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("mortgage_report.pdf")
+            
+            do {
+                try parent.data.write(to: tempURL)
+                
+                let activityViewController = UIActivityViewController(
+                    activityItems: [tempURL],
+                    applicationActivities: nil
+                )
+                
+                if let sourceView = sender.value(forKey: "view") as? UIView {
+                    activityViewController.popoverPresentationController?.sourceView = sourceView
+                }
+                
+                UIApplication.shared.windows.first?.rootViewController?.present(
+                    activityViewController,
+                    animated: true,
+                    completion: nil
+                )
+                
+            } catch {
+                print("Error creating PDF file: \(error)")
+            }
+        }
     }
 } 
