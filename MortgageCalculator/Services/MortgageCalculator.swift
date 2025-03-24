@@ -1,14 +1,8 @@
 import Foundation
 import SwiftUI
 
-// Import the model definitions from MortgageModel.swift
-// Making explicit imports for clarity
-#if canImport(MortgageCalculator)
-import MortgageCalculator
-#endif
-
-class MortgageCalculator {
-    static func calculatePayment(loanAmount: Double, annualInterestRate: Double, loanTermYears: Double, frequency: PaymentFrequency = .monthly) -> Double {
+public class MortgageCalculator {
+    public static func calculatePayment(loanAmount: Double, annualInterestRate: Double, loanTermYears: Double, frequency: PaymentFrequency = .monthly) -> Double {
         let periodicInterestRate = annualInterestRate / Double(frequency.paymentsPerYear) / 100.0
         let numberOfPayments = loanTermYears * Double(frequency.paymentsPerYear)
         
@@ -18,9 +12,9 @@ class MortgageCalculator {
         return payment
     }
     
-    static func calculateAmortizationSchedule(scenario: MortgageScenario) -> [PaymentDetails] {
+    public static func calculateAmortizationSchedule(scenario: MortgageScenario) -> [PaymentDetails] {
         var schedule: [PaymentDetails] = []
-        let frequency = PaymentFrequency(rawValue: scenario.paymentFrequency) ?? .monthly
+        let frequency = scenario.paymentFrequency
         let regularPayment = scenario.regularPayment
         let effectivePayment = scenario.effectivePayment
         let periodicInterestRate = scenario.interestRate / Double(frequency.paymentsPerYear) / 100.0
@@ -99,22 +93,18 @@ class MortgageCalculator {
         return schedule
     }
     
-    static func calculateSavings(baseScenario: MortgageScenario, comparisonScenario: MortgageScenario) -> (timeSaved: Double, interestSaved: Double) {
+    public static func calculateSavings(baseScenario: MortgageScenario, comparisonScenario: MortgageScenario) -> (timeSaved: Double, interestSaved: Double) {
         let baseSchedule = calculateAmortizationSchedule(scenario: baseScenario)
         let comparisonSchedule = calculateAmortizationSchedule(scenario: comparisonScenario)
         
         let basePaymentCount = baseSchedule.count
         let comparisonPaymentCount = comparisonSchedule.count
         
-        let baseFrequency = PaymentFrequency(rawValue: baseScenario.paymentFrequency) ?? .monthly
-        let comparisonFrequency = PaymentFrequency(rawValue: comparisonScenario.paymentFrequency) ?? .monthly
-        
-        // Convert payment count to years
-        let baseYears = Double(basePaymentCount) / Double(baseFrequency.paymentsPerYear)
-        let comparisonYears = Double(comparisonPaymentCount) / Double(comparisonFrequency.paymentsPerYear)
+        let baseFrequency = baseScenario.paymentFrequency
+        let comparisonFrequency = comparisonScenario.paymentFrequency
         
         // Calculate time saved
-        let timeSaved = baseYears - comparisonYears
+        let timeSaved = Double(basePaymentCount) / Double(baseFrequency.paymentsPerYear) - Double(comparisonPaymentCount) / Double(comparisonFrequency.paymentsPerYear)
         
         // Calculate total interest for both scenarios
         let baseTotalInterest = baseSchedule.last?.interestToDate ?? 0
