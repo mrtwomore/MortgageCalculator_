@@ -1,11 +1,11 @@
 import Foundation
+import SwiftUI
 
-struct PaymentDetails {
-    let principal: Double
-    let interest: Double
-    let totalPayment: Double
-    let remainingBalance: Double
-}
+// Import the model definitions from MortgageModel.swift
+// Making explicit imports for clarity
+#if canImport(MortgageCalculator)
+import MortgageCalculator
+#endif
 
 class MortgageCalculator {
     static func calculatePayment(loanAmount: Double, annualInterestRate: Double, loanTermYears: Double, frequency: PaymentFrequency = .monthly) -> Double {

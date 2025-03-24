@@ -1,6 +1,6 @@
+import Foundation
 import SwiftUI
 import Charts
-import Foundation
 
 // Platform-specific typealias for cross-platform compatibility
 #if os(iOS)
@@ -103,10 +103,8 @@ struct CustomActionButton {
 }
 
 // Import all local modules
-
-// Importing custom components from local modules
-// These would normally be automatically available via module imports,
-// but we're declaring them explicitly for clarity
+import Foundation
+import SwiftUI
 
 // Forward declarations of required types
 // Normally these would be available via module imports
