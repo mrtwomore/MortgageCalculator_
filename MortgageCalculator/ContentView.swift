@@ -1,8 +1,108 @@
 import SwiftUI
 import Charts
+import Foundation
+
+// Platform-specific typealias for cross-platform compatibility
+#if os(iOS)
+import UIKit
+import PDFKit
+
+// iOS specific typealias
+typealias PlatformViewControllerRepresentable = UIViewControllerRepresentable
+typealias PlatformViewController = UIViewController
+typealias PlatformView = UIView
+typealias PlatformBarButtonItem = UIBarButtonItem
+typealias PlatformActivityViewController = UIActivityViewController
+#elseif os(macOS)
+import AppKit
+import PDFKit
+
+// macOS specific typealias
+typealias PlatformViewControllerRepresentable = NSViewControllerRepresentable
+typealias PlatformViewController = NSViewController
+typealias PlatformView = NSView
+typealias PlatformBarButtonItem = NSToolbarItem
+// For macOS we'll use custom implementation where needed
+#endif
+
+// Cross-platform UI helpers
+extension View {
+    @ViewBuilder
+    func customActionSheet(
+        isPresented: Binding<Bool>,
+        title: String,
+        message: String? = nil,
+        buttons: [CustomActionButton]
+    ) -> some View {
+        #if os(iOS)
+        self.actionSheet(isPresented: isPresented) {
+            ActionSheet(
+                title: Text(title),
+                message: message != nil ? Text(message!) : nil,
+                buttons: buttons.map { button in
+                    switch button.role {
+                    case .cancel:
+                        return .cancel(Text(button.title))
+                    case .destructive:
+                        return .destructive(Text(button.title), action: button.action)
+                    default:
+                        return .default(Text(button.title), action: button.action)
+                    }
+                }
+            )
+        }
+        #elseif os(macOS)
+        self.popover(isPresented: isPresented) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title).font(.headline)
+                
+                if let message = message {
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                
+                Divider()
+                
+                ForEach(buttons.indices, id: \.self) { index in
+                    let button = buttons[index]
+                    Button(action: {
+                        isPresented.wrappedValue = false
+                        button.action?()
+                    }) {
+                        Text(button.title)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(button.role == .destructive ? .red : nil)
+                }
+            }
+            .padding()
+            .frame(width: 300)
+        }
+        #endif
+    }
+}
+
+struct CustomActionButton {
+    var title: String
+    var role: ButtonRole?
+    var action: (() -> Void)?
+    
+    static func cancel(_ title: String) -> CustomActionButton {
+        CustomActionButton(title: title, role: .cancel, action: nil)
+    }
+    
+    static func destructive(_ title: String, action: (() -> Void)? = nil) -> CustomActionButton {
+        CustomActionButton(title: title, role: .destructive, action: action)
+    }
+    
+    static func `default`(_ title: String, action: (() -> Void)? = nil) -> CustomActionButton {
+        CustomActionButton(title: title, role: nil, action: action)
+    }
+}
 
 // Import all local modules
-import Foundation
 
 // Importing custom components from local modules
 // These would normally be automatically available via module imports,
@@ -122,28 +222,6 @@ struct MortgageChartView: View {
     var body: some View { Text("Mortgage Chart") }
 }
 
-// Platform-specific typealias for cross-platform compatibility
-#if os(iOS)
-import UIKit
-import PDFKit
-
-// iOS specific typealias
-typealias PlatformViewControllerRepresentable = UIViewControllerRepresentable
-typealias PlatformViewController = UIViewController
-typealias PlatformView = UIView
-typealias PlatformBarButtonItem = UIBarButtonItem
-typealias PlatformActivityViewController = UIActivityViewController
-#elseif os(macOS)
-import AppKit
-
-// macOS specific typealias
-typealias PlatformViewControllerRepresentable = NSViewControllerRepresentable
-typealias PlatformViewController = NSViewController
-typealias PlatformView = NSView
-typealias PlatformBarButtonItem = NSToolbarItem
-// macOS doesn't have equivalent for UIActivityViewController
-#endif
-
 // Note: The real implementations would come from your actual model files
 // This is just to satisfy the compiler for ContentView
 
@@ -214,6 +292,20 @@ struct ContentView: View {
                 PDFPreview(data: data)
             }
         }
+        .customActionSheet(
+            isPresented: $showingSaveOptions,
+            title: "Save Options",
+            message: "Save or update the current scenario",
+            buttons: [
+                CustomActionButton.default("Save Current Scenario") {
+                    scenarioStore.updateScenario(scenarioStore.currentScenario)
+                },
+                CustomActionButton.default("Save as New Scenario") {
+                    showingScenarioSelector = true
+                },
+                CustomActionButton.cancel("Cancel")
+            ]
+        )
         .preferredColorScheme(getColorScheme())
     }
     
@@ -225,7 +317,9 @@ struct ContentView: View {
                         Text("Loan Amount")
                         Spacer()
                         TextField("Loan Amount", value: currentScenario.loanAmount, format: .currency(code: "USD"))
+                            #if os(iOS)
                             .keyboardType(.decimalPad)
+                            #endif
                             .multilineTextAlignment(.trailing)
                     }
                     
@@ -233,7 +327,9 @@ struct ContentView: View {
                         Text("Interest Rate (%)")
                         Spacer()
                         TextField("Interest Rate", value: currentScenario.interestRate, format: .number)
+                            #if os(iOS)
                             .keyboardType(.decimalPad)
+                            #endif
                             .multilineTextAlignment(.trailing)
                     }
                     
@@ -241,7 +337,9 @@ struct ContentView: View {
                         Text("Loan Term (Years)")
                         Spacer()
                         TextField("Loan Term", value: currentScenario.loanTermYears, format: .number)
+                            #if os(iOS)
                             .keyboardType(.decimalPad)
+                            #endif
                             .multilineTextAlignment(.trailing)
                     }
                     
@@ -373,46 +471,27 @@ struct ContentView: View {
                 }
             }
             .actionSheet(isPresented: $showingScenarioSelector) {
-                ActionSheet(
-                    title: Text("Select Scenario"),
-                    message: Text("Choose a saved scenario or create a new one"),
-                    buttons: scenarioSelectButtons
-                )
-            }
-            .actionSheet(isPresented: $showingSaveOptions) {
-                ActionSheet(
-                    title: Text("Save Options"),
-                    message: Text("Save or update the current scenario"),
-                    buttons: [
-                        .default(Text("Save as New")) {
-                            newScenarioName = currentScenario.wrappedValue.name + " (Copy)"
-                            let newScenario = scenarioStore.duplicateScenario(currentScenario.wrappedValue)
-                            scenarioStore.currentScenario = newScenario
-                        },
-                        .default(Text("Update Current")) {
-                            scenarioStore.updateScenario(currentScenario.wrappedValue)
-                        },
-                        .cancel()
-                    ]
-                )
+                CustomActionButton(title: "Select Scenario", role: nil, action: {
+                    showingScenarioSelector = true
+                })
             }
         }
     }
     
-    private var scenarioSelectButtons: [ActionSheet.Button] {
-        var buttons: [ActionSheet.Button] = scenarioStore.scenarios.map { scenario in
-            .default(Text(scenario.name)) {
+    private var scenarioSelectButtons: [CustomActionButton] {
+        var buttons: [CustomActionButton] = scenarioStore.scenarios.map { scenario in
+            CustomActionButton(title: scenario.name, role: nil, action: {
                 scenarioStore.currentScenario = scenario
-            }
+            })
         }
         
-        buttons.append(.default(Text("Create New Scenario")) {
+        buttons.append(CustomActionButton(title: "Create New Scenario", role: nil, action: {
             let newScenario = ScenarioStore.createDefaultScenario()
             scenarioStore.addScenario(newScenario)
             scenarioStore.currentScenario = newScenario
-        })
+        }))
         
-        buttons.append(.cancel())
+        buttons.append(CustomActionButton(title: "Cancel", role: .cancel, action: nil))
         
         return buttons
     }
@@ -490,19 +569,9 @@ struct ContentView: View {
             }
             .navigationTitle("Payment Results")
             .actionSheet(isPresented: $showingExportOptions) {
-                ActionSheet(
-                    title: Text("Export Options"),
-                    message: Text("Choose an export format"),
-                    buttons: [
-                        .default(Text("Generate PDF Report")) {
-                            exportPDF()
-                        },
-                        .default(Text("Export to CSV")) {
-                            exportCSV()
-                        },
-                        .cancel()
-                    ]
-                )
+                CustomActionButton(title: "Export Options", role: nil, action: {
+                    showingExportOptions = true
+                })
             }
         }
     }
@@ -627,26 +696,24 @@ struct ContentView: View {
             }
             .navigationTitle("Scenario Comparison")
             .actionSheet(isPresented: $showingScenarioSelector) {
-                ActionSheet(
-                    title: Text("Select Scenario to Compare"),
-                    message: Text("Choose a scenario to compare with the current one"),
-                    buttons: comparisonSelectButtons
-                )
+                CustomActionButton(title: "Select Scenario to Compare", role: nil, action: {
+                    showingScenarioSelector = true
+                })
             }
         }
     }
     
-    private var comparisonSelectButtons: [ActionSheet.Button] {
-        var buttons: [ActionSheet.Button] = scenarioStore.scenarios
+    private var comparisonSelectButtons: [CustomActionButton] {
+        var buttons: [CustomActionButton] = scenarioStore.scenarios
             .filter { $0.id != currentScenario.wrappedValue.id }
             .map { scenario in
-                .default(Text(scenario.name)) {
+                CustomActionButton(title: scenario.name, role: nil, action: {
                     comparisonScenario = scenario
                     comparisonSchedule = MortgageCalculator.calculateAmortizationSchedule(scenario: scenario)
-                }
+                })
             }
         
-        buttons.append(.cancel())
+        buttons.append(CustomActionButton(title: "Cancel", role: .cancel, action: nil))
         
         return buttons
     }
@@ -1026,8 +1093,8 @@ extension View {
         self // Mock implementation for compiler
     }
     
-    func actionSheet(isPresented: Binding<Bool>, content: @escaping () -> ActionSheet) -> some View {
-        self // Mock implementation for compiler
+    func customActionSheet(isPresented: Binding<Bool>, content: @escaping () -> ActionSheet) -> some View {
+        self.actionSheet(isPresented: isPresented, content: content)
     }
 }
 
@@ -1051,8 +1118,28 @@ extension View {
     }
     
     // macOS uses different APIs for sheets/popovers
-    func actionSheet(isPresented: Binding<Bool>, content: @escaping () -> Never) -> some View {
-        self // No-op for macOS, would use popover instead
+    func customActionSheet(isPresented: Binding<Bool>, content: @escaping () -> ActionSheet) -> some View {
+        self.popover(isPresented: isPresented) {
+            VStack(spacing: 10) {
+                content().title
+                if let message = content().message {
+                    message
+                }
+                ForEach(0..<content().buttons.count, id: \.self) { index in
+                    let button = content().buttons[index]
+                    Button {
+                        isPresented.wrappedValue = false
+                        button.action?()
+                    } label: {
+                        button.label
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(button.role == .destructive ? .red : nil)
+                }
+            }
+            .padding()
+            .frame(width: 300)
+        }
     }
 }
 

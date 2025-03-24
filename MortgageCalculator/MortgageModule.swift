@@ -1,6 +1,13 @@
 import Foundation
 import SwiftUI
 
+// This is a module file that acts as a central point for importing components.
+// Instead of using @_exported which requires module setup, we'll directly define
+// our types in the appropriate files and import them normally.
+
+// Note: In a production app, you would organize these into proper Swift modules
+// with Package.swift, but for simplicity we're using a flat structure.
+
 // Re-export all our models
 @_exported import struct MortgageCalculator.MortgageScenario
 @_exported import struct MortgageCalculator.PaymentDetails
